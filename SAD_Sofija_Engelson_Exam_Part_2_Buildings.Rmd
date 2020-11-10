@@ -1,0 +1,232 @@
+---
+title: "Buildings"
+author: "Sofija Engelson"
+date: "1 2 2020"
+output: 
+  pdf_document
+---
+# __Introduction__
+Goals and leading questions:
+
+* What could be issues when analysing this data set? 
+  + How to handle NAs? 
+* How does the the target variable "meter_reading" in change with respect to time?
+  + How does the energy use change during a year?
+  + How does the energy use change during a week?
+* How well can a linear model predict the target variable "meter_reading" with the given meteorological data and time?
+
+## __Preliminaries__
+Here are all the libraries we need to run the following code:
+```{r, warning = FALSE, message = FALSE}
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+library(corrplot)
+```
+## __Reading the data__
+For reading the CSV-file, we need to first set the path that the data was safed in and the name that was used. The path and the name are extracted so that they can be adjusted by the next user.
+```{r}
+file_path <- "C:/Users/Sofija/Documents/Leuphana/Software for analysing data/Reports/Report 2/"
+file_name <- "building_284.csv"
+building <- read.csv(paste0(file_path, file_name), sep = ",")
+
+glimpse(building)
+```
+The data set "Building and Weather Data for Electricity Consumption" consists of one target variable "meter_reading" (= reading from the meter, measured in kWh), a timestamp (for each hour in 2016) and meteorological data i.e. "air_temperature", "cloud_coverage".
+
+If we look at the data sorted by timestamp, we see that the data points are duplicated because of different measurements for the target variable "meter_reading" and exactly three different value for the variable "meter" - which are `r unique(building$meter)`. We assume that meters are different measures. Since all of the other variables are the same, we will split the data by meter in the following analysis.
+
+## __Cleaning the data__
+This data set is challeging, because it includes empty columns, constant column values, missing data (NAs) and outliers.
+First, let's do some cleaning and preparing.
+```{r, results = 'hide', warning = FALSE, message = FALSE }
+# Deleting empty variable "floor_count"
+building$floor_count <- NULL
+
+# Converting the factored timestamp into a datetime format
+building$timestamp <- as.POSIXct(building$timestamp, format = "%Y-%m-%d %H:%M:%S")
+
+# Calculating numeric time measures for later
+building$month <- as.numeric(lubridate::month(building$timestamp))
+building$hour <- as.numeric(lubridate::hour(building$timestamp))
+```
+Second, extract constant variables and delete them from the data set. 
+```{r}
+const_var <- data.frame("variable" = 0, "value" = 0) 
+numb_const_var = 1
+# Loop that goes trough all columns and checks whether there are constant column values which 
+# is equivalent to number of unique values being one, stores these in a prepared data frame  
+# called const_var and deletes the constant variables in the data set 
+for (col in colnames(building)) {
+  if (length(unique(building [[col]])) == 1) {
+    const_var [numb_const_var, ] <- c(as.character(col), 
+                                      as.character(unique(building [[col]])))
+    building [[col]] <- NULL
+    numb_const_var = numb_const_var + 1
+  }
+}
+
+print(const_var)
+```
+According to the extracted constant variables, the analysis is about a building built in 1975 that has the ID 284, located at site with ID 2. It's mostly used for Entertainment/ public assembly and it has 230.259 square feet.
+
+## __Exploring the missing values (NAs)__
+```{r}
+# Counting the NAs for each variable
+NAs <- data.frame(sapply(building, function(x) sum(is.na(x)), simplify = FALSE), 
+                  row.names = "all_months")
+print(t(NAs))
+```
+There are no missing values in the target variable "meter_reading". The NAs in timestamp will bother us when ploting with respect to time in the next chapter. So we are going to delete them. 
+```{r, warning = FALSE, message = FALSE}
+# Deleting the data point without an timestamp
+building <- building[-which(is.na(building$timestamp)),]
+```
+What about the other variables? We want to make sure there is no systematic error in the measurements.
+```{r}
+# Calculating numeric time measures (will help us later)
+building$month <- as.numeric(lubridate::month(building$timestamp))
+building$hour <- as.numeric(lubridate::hour(building$timestamp))
+
+# Prepare an empty data set for the 
+NAs_per_month <- data.frame()
+
+# Loop that counts the NAs for each subset of month and meter
+for (month in unique(building$month)) {
+  for (meter in unique(building$meter)) {
+    number_NA <- sapply(building [building$month == month & building$meter == meter,],
+                        function(x) sum(is.na(x)))
+    row <- c(month, meter, number_NA)
+    NAs_per_month <- rbind(NAs_per_month, row)
+  }
+}
+
+# Naming the columns appropriately
+colnames(NAs_per_month) <- c("month", "meter", colnames(NAs))
+
+# Reshaping (wide to long format) the data to make it ready for plotting
+NAs_per_month_resh <- reshape2::melt(NAs_per_month, id.vars = c("month", "meter")) 
+
+NA_plot <- ggplot(NAs_per_month_resh, aes(fill = variable, x = as.factor(month), y = value)) +
+            geom_bar(position = "stack", stat = "identity") +
+            xlab("Month in 2016") +
+            ylab("Number of NAs") +
+            theme_light() +
+            theme(plot.title = element_text(hjust = 0.5), legend.position = "bottom") +
+            ggtitle("Checking out the NAs") +
+            facet_wrap(~ meter)
+
+print(NA_plot)
+```
+We can see that the plot for the different meters looks exactly the same. Therefore we can assume that if there is a NA for one variable at a certain point in time, it applies to all meters. The variable "cloud_coverage" has the most amount of NAs pretty much equally distributed for all months. "Wind_direction" also has a lot of missing values. Since we don't what to explore the meteorological data further, we will not delete the NAs, but we will keep this in mind when modelling.
+
+# __Exploring the target variable "meter_reading" in connection to time__
+Let's get a general overview first.
+```{r}
+outliers <- ggplot(building, aes (x = quarter(building$timestamp), 
+              y = meter_reading, group = quarter(building$timestamp))) +
+              geom_boxplot(outlier.colour="red") +
+              stat_boxplot(geom ='errorbar') +
+              xlab("Quarter in 2016") +
+              ylab("Meter reading") +
+              theme_light() +
+              theme(plot.title = element_text(hjust = 0.5), legend.position = "none") +
+              ggtitle("General overview and checking for outliers") +
+              facet_wrap(~ meter)
+
+print(outliers)
+```
+Here we can see boxplots of the "meter_reading" for each quarter of the year in 2016 divided by the meters. We can see that each meter is measuring something very different connected to electricity (maybe different devices) since the scales are different. The outliers are red dots mostly above the upper whisker of the boxplot.
+
+Most of the data point of "meter_reading" for meter 0 lie in a range between 175 and 250 kWh. But there are some days where the "meter_reading" goes up very high (up to 650 kWh) or low (down to 0 kWh). Especially the drops down to 0 kWh are surprising since there are usually devices that continuously need electricity such as refrigerators or wifi-routers. The drops to zero could indicate an unintended total loss of electricity. We can not see a clear change of electricity consumption depending on the season or month.
+
+Let's skip the description of the meter 1 for now and take a closer look at the "meter_readings" for a whole year in the following paragraphs.
+
+The "meter_reading" of meter 3 is quite low generally, but it is higher in winter season (January to April). The "meter_reading" changes steadily over the period of one year and there are no strong peaks like in the previous plots.
+```{r}
+# Subsetting for meter
+building_group <- building[building$meter == 1, ]
+
+year <- ggplot(building_group, aes(x = building_group$timestamp, y = meter_reading)) +
+          geom_point(color = "blue") +
+          xlab("Month in 2016")+
+          ylab("Meter reading") +
+          theme_light() +
+          theme(plot.title = element_text(hjust = 0.5), legend.position = "none") +
+          ggtitle("Electicity consumption in a year - Meter 1")
+
+plot(year)
+```
+Meter 1 is very interesting because there is a higher "meter_reading" in the summer season (May/June to September) than in the other months. This could indicate that meter 1 measures something that depending on variables that are correlated with the season like heat for instance. This could be energy use of an air conditioner.
+There are spikes up, but no spikes down like in the previous plot. A measurement of 0 kWh in this context is nothing "unusual". This meter has definitly the biggest y-scale (4 times the scale of meter 0 and 10 times the scale of meter 3).
+
+Now it might be interesting to check out the changes of the "meter_reading" for each meter during a week.
+```{r}
+#Subsetting for the first full week in January that starts with monday
+building_week <-  building[isoweek(building$timestamp) == "1",]
+
+week <- ggplot(building_week, aes(x = timestamp, y = meter_reading)) +
+        geom_line(aes(color = factor(meter))) +
+        scale_color_manual(values = c("red", "blue", "green")) +
+        xlab("Day of the week")+
+        ylab("Meter reading") +
+        labs(color = "meter") +
+        theme_light() +
+        theme(plot.title = element_text(hjust = 0.5), 
+              legend.position = "bottom", axis.text.x = element_text(angle=45, hjust=1)) +
+        ggtitle("Electicity consumption in a week") +
+        scale_x_datetime(date_labels = "%a %d %m", breaks = "1 day", expand = c(0,0))
+        
+
+print(week)
+```
+Here we obviously see the changes of "meter_reading" in day and night, since all the lines go up and down in the period of one day. You can also observe a higher energy consumption on the working days than on the weekend. The electricity consumption is highest on Monday. This indicates that this building is used in the business sector i.e. for hosting conferences rather than for private entertaining i.e. screening movies in a cinema. 
+
+# __Predictive model__
+In this chapter we are modelling a linear model to predict the target variable "meter_reading" by the given meteorological data. Since the meters are measuring different things, we would need a model for each. Therefore we are focussing on one example - meter 1.
+Let's check first check out whether the independent variables are correlated otherwise this would violate the assumption of absence of multicollinearity.
+```{r}
+# Removing variables with too many NAs (compare chapter about the exploration of missing 
+# values)
+building$cloud_coverage <- NULL
+building$wind_direction <- NULL
+# Subsetting for meter 1
+building_meter1 <- building[building$meter == 1, ]
+# Removing meter since this is the grouping variable
+building_meter1$meter <- NULL
+building_meter1 <- select_if(building_meter1, is.numeric)
+
+# Correlation plots
+cor_building_meter1 <- cor(building_meter1, use = "complete.obs")
+corrplot(cor_building_meter1, method = 'number')
+```
+We can see that "air_temperature" and "sea_level_pressure" are highly negativly correlated. We will exclude "sea_level_pressure" to reduce the multicollinearity measure before modelling. "Precip_depth_1_hr" and "wind_speed" are not correlated with our target variable, so we will exclude them too.
+```{r}
+# Removing "sea_level_pressure" due to multicollinearity
+building_meter1$sea_level_pressure <- NULL
+# Removing insignificant variables
+building_meter1$precip_depth_1_hr <- NULL
+building_meter1$wind_speed <- NULL
+
+# Modelling the linear model with all the remained variables and the interaction term between 
+# month and hour     
+model_building <- lm(meter_reading ~ . + month:hour, data = building_meter1)
+summary(model_building)
+```
+The intercept is pretty high with 52.81, "dew_temperature" and "hour" have quite big positive coefficients. The coefficient of the interaction term is small and insignificant.
+The R^2 of this model is 22.66%. This means the linear model can only explain around a quarter of the variance in the target variable.
+```{r}
+hist(resid(model_building), main = paste("Histogram of residuals"), xlab = "Residuals",
+  freq = FALSE)
+```
+The residuals are not normally distributed, they are right-skewed.
+
+Therefore, we conclude two things:
+
+* there are other factors that influence the electricity consumption in building 284 other than meteorological data and time
+* we need to use `glm` for modelling while using another error distribution
+
+Haiku:  
+Sitting at night, falling asleep,  
+wondering: "Should I do more?"  
+- No, enough of building 284!

@@ -1,0 +1,244 @@
+---
+title: "Cardiovascular Disease"
+author: "Sofija Engelson"
+date: "26 2 2020"
+output: pdf_document
+---
+
+# __Introduction__
+Goals and leading questions:
+
+* Exploratory analysis
+  + How is the occurance of cardiovascular disease conneced to gender and age?
+  + What influence has the BMI on the target variable?
+  + How does blood pressure behave for healthy and sick people?
+* Predictive model
+  + How high is the risk of getting cardiovascular disease?
+  + How likely am I to have cardiovascular disease?
+
+## __Preliminaries__
+Here are all the libraries we need to run the following code:
+```{r, warning = FALSE, message = FALSE}
+library(ggplot2)    # for advanced plotting
+library(dplyr)      # for data manipulation
+library(ggfortify)  # for Principle Component Analysis
+library(modEvA)     # for calculating the R^2 for glms
+library(gridExtra)  # for putting plots together in Markdown
+```
+## __Reading the data__
+For reading the CSV-file, we need to first set the path that the data was safed in and the name that was used. The path and the name are extracted so that they can be adjusted by the next user.
+```{r}
+file_path <- "C:/Users/Sofija/Documents/Leuphana/Software for analysing data/Reports/Report 3/"
+file_name <- "cardio_train.csv"
+cardio_train <- read.csv(paste0(file_path, file_name), sep = ";", colClasses = 
+                  c("integer","integer","factor","integer", "numeric","integer","integer",
+                    "factor","factor","factor","factor","factor", "factor"))
+
+glimpse(cardio_train)
+```
+The data set "Cardiovascular Disease" consists of one binary target variable `cardio` which states whether this person is suffering from cardiovascular disease or not, an `id` and several explanatory variables. Variables such as `age`, `height` or `weight` are numeric, `gender`, `smoke` or `cholestrol` are categorical.
+
+## __Cleaning the data__
+```{r, results = 'hide', warning = FALSE, message = FALSE}
+# Calculating the age in years from the age in days
+cardio_train$age_years <- floor(cardio_train$age/365)
+# Renaming gender and the target variable for better understanding
+cardio_train$gender <- ifelse(cardio_train$gender == "1", "female","male")
+cardio_train$target <- ifelse(cardio_train$cardio == "1", "sick","healthy")
+```
+
+# __Exploratory analysis__
+
+In the exploratory analysis we try to understand the effects of different exporatory variables on the occurance of cardiovasucular disease. The analysis is structured according to the leading questions.
+
+## __Occurance of cardiovascular disease by gender and age__
+```{r}
+# Removing the very few data points with persons with age smaller than 35, which are 
+# creating gaps in further plots and have no information gain
+Age_Gen_tab <- cardio_train[-which(cardio_train$age_years < 35),]
+# Creating a new data frame which includes the sum of people grouped by the target variable, 
+# gender and age in years
+Age_Gen_tab <- aggregate(cardio ~ age_years + gender + target, data = Age_Gen_tab, FUN = length)
+Age_Gen_tab$cardio <- ifelse(Age_Gen_tab$gender == "male", -1*Age_Gen_tab$cardio, Age_Gen_tab$cardio)
+# Creating a new variable that combines the information about the target variable and gender
+Age_Gen_tab$gen_car <- paste0(Age_Gen_tab$gender, "_", Age_Gen_tab$target)
+
+Age_Gen <- ggplot(Age_Gen_tab, aes (x = age_years, y = cardio, fill = gen_car)) +
+            geom_bar(data = subset(Age_Gen_tab, gender == "female"), 
+                     stat = "identity", position = "fill") +
+            geom_bar(data = subset(Age_Gen_tab, gender == "male"), 
+                     stat = "identity", position = "fill") +
+            coord_flip() + 
+            scale_y_continuous(breaks = seq(-1, 1, 0.25), 
+                               labels = c(c(1,0.75,0.5,0.25), seq(0, 1, 0.25))) +
+            scale_fill_manual(values = c("brown1", "salmon", "darkblue", "lightblue")) +
+            ylab("Proportion of cardiovascular diseases") +
+            xlab("Age") +
+            theme_light() +
+            theme(plot.title = element_text(hjust = 0.5), legend.position = "bottom") +
+            ggtitle("Cardiovascular diseases by gender and age") +
+            labs(fill='Gender_Cardio')
+
+print(Age_Gen)
+```
+This plot shows percent stacked bar plots stating the presence or absence of cardiovascular disease for women (right side) and men (left side) for different ages. The inner bars look like a population pyramide and represent the people suffering from cardiovascular disease. The outer bars are the healthy men/women. 
+
+In this depiction of the proportions of cardiovascular diseases one can see that gender doesn't really have an effect, but age does. As people grow older, the risk for cardiovascular disease increases. There is a little bulge in the pyramides in the age group 45-50.
+
+It's important to look at this diagram with percentage stacked barplots, instead of stacked barplots. In case of stacked barplots, it seems like more women are affected by cardiovascular disease than men. The reason is that absolutely  more woman (`r length(cardio_train$id [cardio_train$gender == "female" & cardio_train$cardio == "1"])`) than men (`r length(cardio_train$id [cardio_train$gender == "male" & cardio_train$cardio == "1"])`) are sick with cardiovascular disease. But there are also around twice as many women (`r length(cardio_train$id [cardio_train$gender == "female"])`) than men (`r length(cardio_train$id [cardio_train$gender == "male"])`) in this data set in total. Therefore we have to look at the percentages by age and gender rather than absolute values to understand how gender and age affect the risk for cardiovascular disease.
+
+In this data set around half of the people have cardiovascular disease, which of course thankfully doesn't reperesent the "normal" population.
+
+## __Impact of BMI on the occurance of cardiovascular disease__  
+```{r}
+# Creating a new variable "BMI"
+cardio_train$BMI <- round(cardio_train$weight/(cardio_train$height/100)^2)
+# Creating a new data frame which includes the sum of people grouped by the target variable and BMI
+weight_tab <- aggregate(cardio ~ BMI + target, data = cardio_train, FUN = length)
+# Removing all people with an unrealistically small or big BMI
+# Thresholds are set according to prior reasearch on the internet plus added tolerance
+weight_tab <- weight_tab[-which(weight_tab$BMI < 15 | weight_tab$BMI > 50),]
+
+weight <- ggplot(weight_tab, aes(x = BMI, y = cardio, fill = target)) + 
+              geom_bar(stat = "identity", position = "stack") +
+              scale_fill_manual(values = c("springgreen1", "salmon")) +
+              ylab("Number of patients") +
+              xlab("BMI") +
+              theme_light() +
+              theme(plot.title = element_text(hjust = 0.5)) +
+              ggtitle("Cardiovascular diseases by BMI") +
+              labs(fill='Target')
+
+print(weight)
+```
+A normal BMI is under $25\frac{kg}{m^2}$, a person is overweight with a BMI between 25 and $29\frac{kg}{m^2}$ and obese with a BMI over $30\frac{kg}{m^2}$.
+
+The same issue as above (realtive vs. absolute values) applies here: There are absolutely more people with a BMI around $25\frac{kg}{m^2}$ that have cardiovascular disease, but there are also more people with a BMI around $25\frac{kg}{m^2}$ in this data set in total. Thus, the relative portion of sick people of all people for a particular BMI has to be considered for further conclusions. On the other hand, in this plot the distribution by BMI can be explored.
+
+The percentage of patients with cardiovascular disease increases with higher BMI. Therefore, we can conclude that overweight and obsity are risk factors for cardiovascular disease.
+
+## __Exploring the systolic and diastolic blood pressure for healthy and sick people__
+
+```{r}
+# Removing all people with an unrealistically small or big ap_hi and ap_lo
+# Thresholds are set according to prior reasearch on the internet plus added tolerance
+ap_tab <- cardio_train[-which(cardio_train$ap_hi < 50 | cardio_train$ap_hi > 250),]
+ap_tab <- ap_tab[-which(ap_tab$ap_lo < 10 | ap_tab$ap_lo > 200),]
+
+ap_hi <- ggplot(ap_tab, aes(x = target, y = ap_hi)) + 
+              geom_boxplot(outlier.colour="red") +
+              stat_boxplot(geom ='errorbar') +
+              xlab("Presence of cardiovascular disease") +
+              ylab("Systolic blood pressure") +
+              theme_light() +
+              theme(plot.title = element_text(hjust = 0.5)) +
+              ggtitle("Systolic blood pressure by target")
+
+ap_lo <- ggplot(ap_tab, aes(x = target, y = ap_lo)) + 
+              geom_boxplot(outlier.colour="red") +
+              stat_boxplot(geom ='errorbar') +
+              xlab("Presence of cardiovascular disease") +
+              ylab("Diastolic blood pressure") +
+              theme_light() +
+              theme(plot.title = element_text(hjust = 0.5)) +
+              ggtitle("Diastolic blood pressure by target")
+
+grid.arrange(ap_hi, ap_lo, ncol = 2)
+```
+The blood pressure of people with cardiovascular disease is generally higher compared to healthy people. Also the variance of systolic blood presure measurements is larger for sick patients. Outliers are marked in red. As expected, high blood pressure correlates with the occurance of cardiovascular disease. 
+
+# __Predictive model__
+
+In this chapter we are modelling a logistic regression model to predict the target binary variable `cardio` by the given medical data.
+
+We are going to explore the relationship between the target variable and the numerical predictors with the help of the Principal Component Analysis (PCA) and the categorical predictors with Chi-Square-Tests.
+```{r}
+# Selecting numeric explanatory variables
+cardio_train_num <- select_if(cardio_train, is.numeric)
+# Removing id and age in days since these variables don't contribute to information gain
+cardio_train_num$id <- NULL
+cardio_train_num$age <- NULL
+# Removing BMI because it's calculated through the two original variable weight and height
+cardio_train_num$BMI <- NULL
+# PCA
+pca <- prcomp(cardio_train_num, scale = TRUE)
+summary(pca)
+```
+The first two principal components have eigenvalues greater than 1. These two components explain 47,13% of the variation in the data.
+```{r}
+autoplot(pca, data = cardio_train_num, colour = 'grey', loadings = TRUE, loadings.label = TRUE,
+         loadings.label.size = 3, loadings.label.colour = 'black', loadings.colour = 'black') +
+  ggtitle("PCA") +
+  theme_bw()
+```
+
+We can identify three factors (arrows that are close to each other) that point in different directions: `height` + `weights`, `ap_hi` + `ap_lo` and `age_years`. The first principal component has a large negative association with `height` and `weight.` The second principal component has a negative association with `ap_hi` and `ap_low`. There are some data points in the direction of `ap_hi` and `ap_lo` that are very far away from the main data point cloud.
+
+In the Chi-Square-Test the null-hypothesis states that there exists no relationship between the variables. The alternative hypothesis is that the variables depend upon each other.
+
+**Relationship between `cardio` and alcohol consumption:**
+```{r}
+# Creating a contingency table for the target variable and alcohol consumption
+ContTab_alc <- table(target = cardio_train$target, alcohol = cardio_train$alco, deparse.level = 2)
+print(ContTab_alc)
+Chi_alc <- chisq.test(ContTab_alc)
+```
+Since the p-value of `r Chi_alc$p.value` is not smaller than the threshold of 0.05, we can not reject the null-hypothesis. 
+We have to keep in mind, that there is no information about the amount of alcohol intake given in the data set discription. In addition, the information about the alcohol intake was given by the person itself and is therefore a subjective feature.
+
+**Relationship between `cardio` and smoking:**
+```{r}
+ContTab_smoke <- table(target = cardio_train$target, smoke = cardio_train$smoke, deparse.level = 2)
+print(ContTab_smoke)
+Chi_smoke <- chisq.test(ContTab_smoke)
+```
+Since the p-value of `r Chi_smoke$p.value` is much smaller than the threshold of 0.05, we can reject the null-hypothesis in favor of the alternative hypothesis.
+
+**Relationship between `cardio` and physical activity:**
+```{r}
+ContTab_active <- table(target = cardio_train$target, active= cardio_train$active, deparse.level = 2)
+print(ContTab_active)
+Chi_active <- chisq.test(ContTab_active)
+```
+Since the p-value `r Chi_active$p.value` is much smaller than the threshold of 0.05, we can reject the null-hypothesis in favor of the alternative hypothesis.
+```{r, warning = FALSE, message = FALSE}
+# Removing the gender because according to previous analysis we have seen that gender 
+# doesn't influence the target variable
+# Instead of height and weight and the interaction-term between them, we are inclucing 
+# the new variable BMI
+cardio_train_mod <- select(cardio_train, c(ap_hi, ap_lo, cholesterol, gluc, smoke, alco, 
+                                           active, age_years, cardio, BMI))
+# Creating a logistic regression model based on the selected variables
+model_cardio <- glm(cardio ~ ., data = cardio_train_mod, family = binomial(link="logit"))
+summary(model_cardio)
+```
+Since the variables `cholesterol`, `gluc`, `smoke`, `active` and `alco` are categorical variables, there are coefficients for all other then the first level of these variables. These are included in the prediction, if they apply. Almost all of the variables are highly significant.
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+R_srq <- RsqGLM(model_cardio)
+R_srq$Nagelkerke
+```
+The $R^2$ of this model is: `r round(R_srq$Nagelkerke*100, digits = 2)`% .
+```{r}
+hist(resid(model_cardio), main = paste("Histogram of residuals"), xlab = "Residuals", freq = FALSE)
+curve(dnorm(x, mean(resid(model_cardio)), sd(resid(model_cardio))), add = TRUE)
+```
+The residuals of this model are more or less normally distributed. 
+
+## __Prediction for an example__
+Let's make a prediction for the author of this report:
+```{r}
+MyCardio <- data.frame(ap_hi = 115, ap_lo = 73, cholesterol = as.factor(1), gluc = as.factor(1), 
+                       smoke = as.factor(0), alco = as.factor(0), active = as.factor(1), 
+                       age_years = 24, BMI = 54/1.63^2)
+
+print(MyCardio)
+```
+```{r, results = 'hide', message = FALSE, warning = FALSE}
+predict(model_cardio, MyCardio, type = "response")
+```
+
+Oh great, according to my model I have a probability of `r round(predict(model_cardio, MyCardio, type = "response") * 100, digits = 2)` % of having cardiovascular disease at this point in my life. Since I don't have cardiovascular disease, our model is doing good on this example.
+
+All in all, we have explored the effect of different variables on the occurance of cardiovascular disease on quite a big data set. The results of the analysis don't show any surprising results, but rather confirm the common knowledge of the risk factors for it. This data set doesn't have missing values, but there are some unrealisic measurements in several variables (e.g. `ap_hi`, `ap_lo`, `weight` or `height`) which could be affiliated with measurement errors. If these measurement errors would have been removed, the $R^2$ of the model would improve. 
+
+
